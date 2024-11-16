@@ -29,74 +29,73 @@ Also add Jupyter notebook or script demonstrating benchmarking process and resul
 ---
 ---
 
+# OVERVIEW
+INSERT IMAGE FLOW
 
-# Understanding of Concepts
+
+# UNDERSTANDING CONCEPTS
 > Given that almost all terms mentioned above are new for me 😅, let me provide notes on what all they mean. 
 
-
-@oobabooga yeah, StaticCache by itself won't be faster -- it only shines together with torch.compile
-
-
-self.model.context.set_tensor_shape(0, dynamic_shape): We set the dynamic shape of the TensorRT engine's input tensor to the dynamic_shape tensor we created. This tells the engine to expect input tensors with the specified shape.
-
-The dynamic shape handling is taken care of by the TensorRT engine, which is designed to handle inputs with varying shapes. When we set the dynamic shape of the input tensor, the engine will automatically adjust its internal buffers and computations to accommodate the new shape.
-
-In this specific case, the dynamic shape handling is used to enable the model to process input sequences of varying lengths. By setting the dynamic shape of the input tensor, we allow the engine to adapt to different sequence lengths, which is essential for many NLP tasks.
-
-To illustrate this, let's consider an example:
-
-Suppose we have a batch of input sequences with lengths 10, 20, and 30. We can create a single input tensor with shape (3, 30) (where 3 is the batch size and 30 is the maximum sequence length). We can then set the dynamic shape of the input tensor to (3, 10), (3, 20), and (3, 30) respectively, to indicate the actual sequence lengths for each batch element.
-
-The TensorRT engine will then adjust its internal buffers and computations to process each batch element with the correct sequence length, without requiring us to create separate input tensors for each sequence length.
+### ONNX
+The ONNX Runtime library [Source](https://github.com/microsoft/onnxruntime) can load an exported ONNX model and perform inference. ONNX Runtime is optimised for running ONNX models efficiently, and it can take advantage of various hardware accelerators (e.g., GPU, TensorRT) to further improve the inference speed.
 
 
-# onnx
-Once exported to ONNX format, a model can be:
+### Dynamic Shape Handling
+In the context of language models, dynamic shapes refer to the ability to handle input sequences of varying lengths, rather than being limited to a fixed size. When you export the model to ONNX, you define the **`dynamic axes`** for the input tensors, such as `input_ids`, `attention_mask`, and `position_ids`. All other axes will be treated as static, and hence fixed at runtime. This **allows the ONNX model to accept inputs of different sequence lengths during inference, without the need to pre-define a maximum length**.
 
-optimized for inference via techniques such as graph optimization and quantization.
+For example, the `input_ids` tensor has two dimensions: `batch_size` and `sequence_length`. By defining the `batch_size` dimension as dynamic (`{0: 'batch_size'}`), the ONNX model can accept input sequences of varying lengths, as long as the batch size remains the same. This is possible because when we set the dynamic shape of the input tensors, the **engine will automatically adjust its internal buffers** and computations to accommodate the new shape.
 
-
-# Dynamic axes 
-https://huggingface.co/docs/optimum/en/exporters/onnx/package_reference/configuration#configuration-classes-for-onnx-exports
-
-The dynamic axes. These refer to the input dimensions can be changed dynamically at runtime (e.g. a batch size or sequence length). All other axes will be treated as static, and hence fixed at runtime.
+Source [HuggingFace Docs](https://huggingface.co/docs/optimum/en/exporters/onnx/package_reference/configuration#configuration-classes-for-onnx-exports)
 
 
-# Claude explaination
-- **Dynamic Shapes**: Yes, the code you provided allows the model to handle dynamic shapes. In the context of language models, dynamic shapes refer to the ability to handle input sequences of varying lengths, rather than being limited to a fixed size.
 
 
-When you export the model to ONNX, you define the **dynamic axes** for the input tensors, such as input_ids, attention_mask, and position_ids. This **allows the ONNX model to accept inputs of different sequence lengths during inference, without the need to pre-define a maximum length**.
+### Weight Stripping Nice notes on model
+Once the Tensor RT engine has been created, having the option to strip weights helps to create and optimize an engine without unnecessary weights. It is more fast and no duplicate weights are used. We use it while inferencing, when the engine is loaded and refit with onnx weights. I am not fully clear but it means though.  
+
+Source [NVIDIA Docs](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#weightless-build), [Official Repo](https://github.com/NVIDIA/TensorRT/tree/main/samples/python/sample_weight_stripping)
 
 
-Making a model handle dynamic shapes is important because the length of input text can vary significantly, and you **don't want to limit your model to a specific maximum length**. Dynamic shapes allow the model to be more flexible and applicable to a wider range of use cases.
+### StaticCache
+A Static Cache allows reusing the cached values from previous computations, rather than recomputing them for each new token. This significantly improves the inference speed of the model, as it avoids the overhead of creating and managing the cache dynamically.
+The `StaticCache` class in the `transformers` library is used to initialize and manage the KV cache. **This class pre-allocates the cache tensors with a fixed size**, and the model can then efficiently access and update these cached values during inference.
+
+However, I learnt that `StaticCache` by itself won't be faster -- it only shines together with `torch.compile`. [Source](https://github.com/huggingface/transformers/issues/33270#issuecomment-2444830657)
+
+A comparision with the usual Dynamic Cache -
+
+|                        | **Dynamic Cache**                                                                                 | **Static Cache**                                                                                 |
+|------------------------|---------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
+| Purpose            | Automatically manages the cache for each forward pass. Suitable for single-pass inference where the cache is not reused across multiple calls. | Persists the cache across multiple forward passes. **Useful for generating sequences token by token, where the cache needs to be reused**. |
+| Usage              | Typically used when you don't need to persist the cache between different inference calls.        | Requires manual management of the cache, ensuring that the cache is updated and reused correctly. |
 
 
-- **Static KV Cache**: Yes, the code also makes the model's key-value (KV) cache static. In large language models (LLMs), the attention mechanism uses a cache to store the key and value tensors from previous attention computations. This cache is used to speed up the attention computation during text generation.
-By making the **KV cache static, the model can reuse the cached values from previous computations, rather than recomputing them for each new token**. This significantly improves the inference speed of the model, as it avoids the overhead of creating and managing the cache dynamically.
-In the provided code, the **StaticCache** class is used to initialize and manage the KV cache. **This class pre-allocates the cache tensors with a fixed size (e.g., 32 in the example)**, and the model can then efficiently access and update these cached values during inference.
+> This understanding, along with [this Github issue](https://github.com/huggingface/transformers/issues/30670#issuecomment-2096809195) helps us to navigate into making token by token gerneation, instead of directly calling the `model.generate` method.
 
 
-## More on Static Cache (by qwen)
-- **Dynamic Cache**:
-- - Purpose: Automatically manages the cache for each forward pass. **Suitable for single-pass inference where the cache is not reused across multiple calls.**
-- - Usage: Typically used when you don't need to persist the cache between different inference calls.
-- **Static Cache**:
-- - Purpose: Persists the cache across multiple forward passes. **Useful for generating sequences token by token, where the cache needs to be reused.**
-- - Usage: Requires manual management of the cache, ensuring that the cache is updated and reused correctly.
+---
+---
 
-> This understanding helps to navigate into making token by token gerneation
+# THE PIVOT!
+https://github.com/huggingface/transformers/issues/30670#issuecomment-2096809195. This. 
+Why static cache and decode token by token
+https://github.com/huggingface/transformers/issues/28981#issuecomment-2419754181 How we did for T5
+
+---
+---
 
 
-Regarding loading the ONNX model and running inferences, you can use a library like **ONNX Runtime** to load the exported ONNX model and perform inference. ONNX Runtime is optimized for running ONNX models efficiently, and it can take advantage of various hardware accelerators (e.g., GPU, TensorRT) to further improve the inference speed.
+# THE CODE
+
+
+
+The dummy input tensors (`dummy_input_ids`, `dummy_attention_mask`, `dummy_position_ids`) are used to provide example inputs for the ONNX export process. The ONNX exporter needs these example inputs to understand the shape and data types of the model's inputs, so that it can properly define the input and output signatures of the ONNX model.
 
 
 The wrapper you mentioned, `ModelWrapper`, is a simple class that defines the model's forward method explicitly. This is necessary because the original model's forward method expects a specific set of arguments, which may include optional or conflicting inputs (like `inputs_embeds`). By creating a wrapper, we can control the inputs and outputs more precisely for the ONNX export.
 
 
-Now, let's explain the key concepts in more detail:
 
-## Past Key Values and Cache Position:
 In large language models, the attention mechanism uses a cache to store the key and value tensors from previous attention computations. This cache is used to speed up the attention computation during text generation. 
 
 For example, let's say you have a sequence of input tokens: "The quick brown fox". When the model processes the first token "The", it computes the key and value tensors for the attention mechanism. These tensors are then stored in the cache, along with the position of the token in the sequence (i.e., the **cache position**). 
@@ -106,18 +105,12 @@ When the model processes the next token "quick", it can reuse the cached key and
 By reusing the cached values, the model can generate text much more efficiently, as it doesn't need to recompute the attention for each new token. This is why making the KV cache static is important - it allows the model to access and update the cache efficiently during inference.
 
 
-## Dynamic Axes:
-The dynamic axes in the ONNX export are used to specify **which dimensions of the input tensors can vary in size during inference**. In the provided code, the dynamic axes are defined for `input_ids`, `attention_mask`, and `position_ids`.
-
-For example, the `input_ids` tensor has two dimensions: `batch size` and `sequence length`. By defining the batch size dimension as dynamic ({0: 'batch_size'}), the ONNX model can accept input sequences of varying lengths, as long as the batch size remains the same.
-
-The dummy input tensors (`dummy_input_ids`, `dummy_attention_mask`, `dummy_position_ids`) are used to provide example inputs for the ONNX export process. The ONNX exporter needs these example inputs to understand the shape and data types of the model's inputs, so that it can properly define the input and output signatures of the ONNX model.
 
 
-During inference, you can provide your actual input data (e.g., a batch of text sequences) to the ONNX model, and it will be able to handle the dynamic shapes thanks to the way the export was configured.
+# BENCHMARKING
+Add tables
 
 
-> In summary, the code you provided allows the TinyLlama model to handle dynamic input shapes and static KV caching, which can significantly improve the inference performance of the model. By exporting the model to ONNX and using a library like ONNX Runtime, you can run efficient inference on the model and potentially see faster performance compared to the original Hugging Face model.
 
 
 # On dynamic sizes not being handled well
@@ -129,29 +122,35 @@ Even though this is not directly related to my issue, but surely there have been
 https://github.com/huggingface/optimum/issues/1606#issuecomment-1866507683
 
 
+
 # Not all models are compatible with kv cache
 https://github.com/huggingface/transformers/issues/28981!
 It says llama and whisper only for now.
 
+https://github.com/pytorch/pytorch/issues/74732
 
-# Issues with Tensor RT LLM 
-https://medium.com/@zergtant/accelerating-model-inference-with-tensorrt-tips-and-best-practices-for-pytorch-users-7cd4c30c97bc
+---
 
-Issues to be noted
-When converting a PyTorch model to TensorRT engine, there are several issues should be noted:
+# Drawbacks of (blindly using!) TensorRT 
 
-- Precision differences: TensorRT uses different numerical precision than PyTorch, which lead to small differences in output of model. This is especially important to consider if model will be used in safety-critical applications.
+- Precision differences: TensorRT uses different numerical precision than PyTorch, which  lead to small differences in output of model. 
 
-- Dynamic shapes: PyTorch models can have dynamic input shapes, meaning that input shape can vary from one inference to next. TensorRT requires static input shapes, meaning that the input shape must be known and fixed at time of engine creation. Input shape must be manually specified when creating the TensorRT engine.
+- Dynamic shapes: PyTorch models can have dynamic input shapes, meaning that input shape can vary from one inference to next. **TensorRT requires static input shapes**, meaning that the input shape must be known and fixed at time of engine creation. Input shape must be manually specified when creating the TensorRT engine.
 
-- Unsupported operations: Not all PyTorch operations are supported by TensorRT. Some operations may need to be manually implemented in TensorRT or replaced with supported operations that provide similar functionality.
+- Memory usage: TensorRT engines require additional memory for storing intermediate results and optimization data. TensorRT also killed my kernels when I tried running on the CPU.
 
-- Memory usage: TensorRT engines require additional memory for storing intermediate results and optimization data. This means that memory requirements for TensorRT engine may be different than for the original PyTorch model, and should be taken into account when deploying model.
+- TensorRT version: The version of TensorRT used for engine creation and inference should be compatible with the version of PyTorch used to create the original model. Otherwise, the conversion process may fail or the performance may be suboptimal.
 
-- TensorRT version: The version of TensorRT used for engine creation and inference should be compatible with the version of PyTorch used to create the original model. If the versions are not compatible, the conversion process may fail or the performance of the TensorRT engine may be suboptimal.
+Source [Hengtao Tantai's Blog](https://medium.com/@zergtant/accelerating-model-inference-with-tensorrt-tips-and-best-practices-for-pytorch-users-7cd4c30c97bc)
 
 
-# Issues with the library
+---
+
+# Issues I faced
+
+### With the ONNX export
+By far the biggest issue I faced. 
+
 
 ### Versioning
 
@@ -172,7 +171,7 @@ Here are a few attributes that caused by head to spin!
 - `engine.max_batch_size` (deprecated) vs only supports the value 1 (new) 
 - *a few more!*
 
-Source [NVIDIA forums](https://forums.developer.nvidia.com/t/build-cuda-engine-throws-error/300198/3), [Github Issues](https://github.com/NVIDIA/trt-samples-for-hackathon-cn/issues/104)
+Source [NVIDIA forums](https://forums.developer.nvidia.com/t/build-cuda-engine-throws-error/300198/3), [Github Issues](https://github.com/NVIDIA/trt-samples-for-hackathon-cn/issues/104), [More Issues](https://github.com/NVIDIA-AI-IOT/torch2trt/issues/557#issuecomment-841523481)
 
 
 ### Not using local builds
@@ -185,21 +184,14 @@ The `trtexec` command line wrapper seems like a lightweight tool to convert `onn
 Similarly, the `onnx-tensorrt` library allows to convert `onnx` models to TensorRT format directly. However, again, running on Kaggle systems doesnt seem possible :/ Building the repo locally seems to be the way which isn't possible for me. Source [building onnx-tensorrt.](https://github.com/onnx/onnx-tensorrt?tab=readme-ov-file#building)
 
 
-# On github code by zucchini-nlp
-suggested code works as expected as the results match the dynamic cache generation :)
 
-We have to use the full attn mask because in every attention layer we concatenate previous keys/values with the current one-token key/value, thus obtaining the full attn matrix for the whole sequence length. So we have to apply the correct mask to get correct scores
 
-# Nice notes on model
-https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#weightless-build
-https://github.com/NVIDIA/TensorRT/tree/main/samples/python/sample_weight_stripping
-- Help to create and optimize an engine without unnecessary weights
-- On inference load engine and refit with onnx weights
-- It`s more fast and no duplicate weights
 
-https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#weightless-build
-https://github.com/NVIDIA/TensorRT/tree/main/samples/python/sample_weight_stripping
-- Help to create and optimize an engine without unnecessary weights
-- On inference load engine and refit with onnx weights
-- It`s more fast and no duplicate weights
-
+# REFERENCES
+The open-source community is amazing. Cannot praise them enough. Here are a few links that helped me on the way - 
+- NVIDIA's [Quick Start Guide](https://docs.nvidia.com/deeplearning/tensorrt/archives/tensorrt-861/quick-start-guide/index.html) and [Developer Guide](https://docs.nvidia.com/deeplearning/tensorrt/archives/tensorrt-861/developer-guide/index.html#perform_inference_python) specially the inference sections, [Starter Notebooks](https://github.com/NVIDIA/TensorRT/tree/main/quickstart/IntroNotebooks) but they used `trtexec`!, and their [repo](https://github.com/NVIDIA/TensorRT/tree/main/samples/python/sample_weight_stripping)
+- Pytorch [docs](https://pytorch.org/docs/stable/onnx_torchscript.html#torch.onnx.export) 
+- ONNX [docs](https://onnxruntime.ai/docs/tutorials/mobile/helpers/make-dynamic-shape-fixed.html)
+- HuggingFace's [AMAZING blog](https://huggingface.co/docs/transformers/main/en/llm_optims?static-kv=advanced+usage%3A+control+Static+Cache#static-kv-cache-and-torchcompile)
+- Blogs on Medium by [Fateme Bafghi](https://medium.com/@fatemebfg/tensorrt-conversion-transforming-deep-learning-models-for-high-speed-inference-36548bdca46c) - great help to understand concepts, [Max Melichov](https://medium.com/@maxme006/how-to-create-a-tensorrt-engine-version-10-4-0-ec705013da7c), [Vilson Rodrigues](https://vilsonrodrigues.medium.com/a-friendly-introduction-to-tensorrt-building-engines-de8ae0b74038), [Hengtao Tanai](https://medium.com/@zergtant/accelerating-model-inference-with-tensorrt-tips-and-best-practices-for-pytorch-users-7cd4c30c97bc) - the benchmarking code is from his blogs!
+- Github Repos by [Sithu Aung](https://github.com/sithu31296/PyTorch-ONNX-TRT/tree/master)
