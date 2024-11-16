@@ -49,7 +49,7 @@ Source [HuggingFace Docs](https://huggingface.co/docs/optimum/en/exporters/onnx/
 
 
 
-### Weight Stripping Nice notes on model
+### Weight Stripping
 Once the Tensor RT engine has been created, having the option to strip weights helps to create and optimize an engine without unnecessary weights. It is more fast and no duplicate weights are used. We use it while inferencing, when the engine is loaded and refit with onnx weights. I am not fully clear but it means though.  
 
 Source [NVIDIA Docs](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#weightless-build), [Official Repo](https://github.com/NVIDIA/TensorRT/tree/main/samples/python/sample_weight_stripping)
