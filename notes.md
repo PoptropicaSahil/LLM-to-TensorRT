@@ -123,6 +123,10 @@ The API keeps changing
 ![alt text](image-1.png)
 ![alt text](image.png)
 
+![alt text](image-2.png)
+
+# if engine.binding_is_input(binding):
+if engine.get_tensor_mode(binding) == TensorIOMode.INPUT:
 
 # TRT EXEC
 The trtexec command line wrapper seems like a lightweight tool to convert onnx models to tensor rt. However running it on kaggle (even as a subprocess) doesnt seem possible. One has to build it from the repo and set correct path variables etc.
