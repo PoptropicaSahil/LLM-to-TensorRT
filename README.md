@@ -29,15 +29,14 @@ Also add Jupyter notebook or script demonstrating benchmarking process and resul
 ---
 ---
 
-# OVERVIEW
-INSERT IMAGE FLOW
-
 
 # UNDERSTANDING CONCEPTS
 > Given that almost all terms mentioned above are new for me 😅, let me provide notes on what all they mean. 
 
 ### ONNX
-The ONNX Runtime library [Source](https://github.com/microsoft/onnxruntime) can load an exported ONNX model and perform inference. ONNX Runtime is optimised for running ONNX models efficiently, and it can take advantage of various hardware accelerators (e.g., GPU, TensorRT) to further improve the inference speed.
+The ONNX Runtime library can load an exported ONNX model and perform inference. ONNX Runtime is optimised for running ONNX models efficiently, and it can take advantage of various hardware accelerators (e.g., GPU, TensorRT) to further improve the inference speed.
+
+Source [Official repo](https://github.com/microsoft/onnxruntime)
 
 
 ### Dynamic Shape Handling
@@ -60,7 +59,7 @@ Source [NVIDIA Docs](https://docs.nvidia.com/deeplearning/tensorrt/developer-gui
 A Static Cache allows reusing the cached values from previous computations, rather than recomputing them for each new token. This significantly improves the inference speed of the model, as it avoids the overhead of creating and managing the cache dynamically.
 The `StaticCache` class in the `transformers` library is used to initialize and manage the KV cache. **This class pre-allocates the cache tensors with a fixed size**, and the model can then efficiently access and update these cached values during inference.
 
-However, I learnt that `StaticCache` by itself won't be faster -- it only shines together with `torch.compile`. [Source](https://github.com/huggingface/transformers/issues/33270#issuecomment-2444830657)
+However, I learnt that `StaticCache` by itself won't be faster -- it only shines together with `torch.compile`. 
 
 A comparision with the usual Dynamic Cache -
 
@@ -70,16 +69,17 @@ A comparision with the usual Dynamic Cache -
 | Usage              | Typically used when you don't need to persist the cache between different inference calls.        | Requires manual management of the cache, ensuring that the cache is updated and reused correctly. |
 
 
-> This understanding, along with [this Github issue](https://github.com/huggingface/transformers/issues/30670#issuecomment-2096809195) helps us to navigate into making token by token gerneation, instead of directly calling the `model.generate` method.
+Quoted from the Docs - \
+A `StaticCache` object can be passed to the model’s `generate()` under the past_key_values argument. The object will retain the cache contents, so you can pass it to a new `generate()` call to continue generation, **like you would do with a dynamic cache**. \
+If you want to go further down a level, the `StaticCache` object can also be passed to the model’s forward pass under the same `past_key_values` argument. Using this strategy, you can write your own function to decode the next token given the current token and position and cache position of previously generated tokens.
 
 
----
----
 
-# THE PIVOT!
-https://github.com/huggingface/transformers/issues/30670#issuecomment-2096809195. This. 
-Why static cache and decode token by token
-https://github.com/huggingface/transformers/issues/28981#issuecomment-2419754181 How we did for T5
+
+Source [HuggingFace Docs](https://huggingface.co/docs/transformers/main/en/llm_optims?static-kv=advanced+usage%3A+control+Static+Cache#static-kv-cache-and-torchcompile), [Transformers Issues](https://github.com/huggingface/transformers/issues/33270#issuecomment-2444830657)
+
+> This understanding, along with [this Github issue](https://github.com/huggingface/transformers/issues/30670#issuecomment-2096809195) helps us to navigate into making **token by token generation**. On the other hand, directly calling the `model.generate` method, which would continue generation, as with a dynamic cache. I make this update in Notebook 2, however, with not much success.
+
 
 ---
 ---
@@ -87,47 +87,91 @@ https://github.com/huggingface/transformers/issues/28981#issuecomment-2419754181
 
 # THE CODE
 
+## NOTEBOOK 1 
+**`notebooks/Sarvam-TensorRT_Sahil_EXPORT_ONNX.ipynb`**
+
+High-level steps
+- Create a simple wrapper around the Tinyllama model that defines `past_key_values` (using `StaticCache`) and `cache_position` arguments which are used in the model's forward pass. 
+```python
+# Forward pass with static cache
+outputs = self.model(
+    input_ids=input_ids,
+    attention_mask=attention_mask,
+    position_ids=position_ids,
+    past_key_values=past_key_values,
+    cache_position=cache_position,
+    use_cache=True,
+    return_dict=False
+)
+```
+- Define `dynamic_axes` to support variable `batch_size` and `sequence_length`. 
+- Export the model to ONNX. The dummy input tensors (`dummy_input_ids`, `dummy_attention_mask`, `dummy_position_ids`) are used as example inputs for the ONNX export process. The `opset_version` is slightly notorious!
+- Load the ONNX. Start an `InferenceSession` and get outputs. 
+- Leverage the `np.testing.assert_allclose` to check if the outputs from this ONNX model and the usual model are similar. Till an absolute tolerace of *1e-04*, the outputs are similar. 
+- Define functions to prepare inputs i.e. generate the `input_ids`, `position_ids`, and `attention_mask`. Decode the logits back to text.
 
 
-The dummy input tensors (`dummy_input_ids`, `dummy_attention_mask`, `dummy_position_ids`) are used to provide example inputs for the ONNX export process. The ONNX exporter needs these example inputs to understand the shape and data types of the model's inputs, so that it can properly define the input and output signatures of the ONNX model.
+#### RESULT
+The outputs do not hold any meaning!
+
+| **Input** | **Output** |
+| ----------| ---------  |
+| Describe Albert Einstein |  *amedamed The And Be.ededed And And Andeded\n A A A A\n\n\n\n And And ...* |
 
 
-The wrapper you mentioned, `ModelWrapper`, is a simple class that defines the model's forward method explicitly. This is necessary because the original model's forward method expects a specific set of arguments, which may include optional or conflicting inputs (like `inputs_embeds`). By creating a wrapper, we can control the inputs and outputs more precisely for the ONNX export.
+
+## NOTEBOOK 2
+**`notebooks/Sarvam-TensorRT_Sahil_EXPORT_ONNX_StaticCache.ipynb`** \
+The main logic reamians the same, except, we try to decode tokens one by one. Since the official docs mention how using StaticCache with this method should work, we expect the outputs to be better. 
+
+#### RESULT
+These are much better, but certainly not the best.
+
+| **Input** | **Output** |
+| ----------| ---------  |
+| Describe Albert Einstein |  *2019.\nThe 2019 edition of the annual event will be* |
+| How does the sun burn? |  *2019\nThe 2019 edition of the World Economic Forum's* |
 
 
+## NOTEBOOK 3
+**`notebooks/Sarvam-TensorRT_Sahil_ConvertTRT.ipynb`**
 
-In large language models, the attention mechanism uses a cache to store the key and value tensors from previous attention computations. This cache is used to speed up the attention computation during text generation. 
+With issues over the model's ONNX export and the Tensor RT library not accepting it, this notebook works with Neural Nets. More details in the *Issues I faced section* below.
 
-For example, let's say you have a sequence of input tokens: "The quick brown fox". When the model processes the first token "The", it computes the key and value tensors for the attention mechanism. These tensors are then stored in the cache, along with the position of the token in the sequence (i.e., the **cache position**). 
+The objective of this notebook becomes to check inference speedups while using the Tensor RT framework. 
 
-When the model processes the next token "quick", it can reuse the cached key and value tensors for the previous token "The", instead of recomputing them. This is done by passing the cached key and value tensors, along with the new cache position (which is now 1), to the attention mechanism.
+> Interestingly, this framwork does not run on Kaggle GPUs! One gets a warning about the current GPUs not being supported. Very weird. This is why I switch to Colab
 
-By reusing the cached values, the model can generate text much more efficiently, as it doesn't need to recompute the attention for each new token. This is why making the KV cache static is important - it allows the model to access and update the cache efficiently during inference.
+High-level steps include
+- Define models. I use three models, starting from a 2-layer simple, and end up with a 32-layer deep model trying to mimic an LLM. 
+- Building the TensorRT engine from the ONNX model This requires a bunch of features to be properly defined, like the logger, the builder etc. 
+- Load the Saved Engine and execute. This involves allocating buffers and preparing input data. The code is quite complex. Took a lot of time to get it running!
+- Run the benchmarking code snip for all models. Since there is a variaion in each run, we perform 1000 iterations, repeated 10 times :)
 
 
 
 
 # BENCHMARKING
-Add tables
+We define the metric FPS (Frames per Second) as number of iterations (fixed at 1000) over the time taken. It is evident that small models are inherently faster. As the size of models increase, their FPS decreases. \
+
+The gain in speedup after converting models to Tensor RT follows the same pattern too!. For the most complex model, the gains diminish the least.  
+
+|**Model**| **Tensor RT FPS** | **Pytorch FPS** | **Speedup**  |
+| ----   | ---- | ----| ---- | 
+|  Small |     34526.20 | 8877.71  | **3.89x** |
+|  Deep |     14315.33 | 3451.91  | **4.15x** |
+|  Super Deep |     831.16 | 439.69  | **1.89x** | 
 
 
+<img src="readme-images/results.png" alt="Local Image" width="800" height="475"/> \
 
 
-# On dynamic sizes not being handled well
-The dynamic_axes in torch.onnx.export() should theoretically handle dynamic input shapes, but sometimes the internal operations (especially with the cache mechanism) can still expect fixed sizes. This is likely what's happening here
+> NOTE: This excercise should be taken with a pinch of salt! Even though I have tried to have 1000 iterations repeated 10 times to get the average FPS values, these averages still differ a lot. 
 
+My experiments have yeilded speedups of upto 10x for the Small and Deep model and upto 5x for the Super Deep model. The *mean* Pytorch FPS values for the Small model range from 3000 to 9000. This massive variation should be checked in more detail further. With LLMs, the model complexity and parameter counts increasing manifold!
 
-# Past Issues  with tinyllama
-Even though this is not directly related to my issue, but surely there have been issues while converting small models like tinyllama to onnx. 
-https://github.com/huggingface/optimum/issues/1606#issuecomment-1866507683
-
-
-
-# Not all models are compatible with kv cache
-https://github.com/huggingface/transformers/issues/28981!
-It says llama and whisper only for now.
-
-https://github.com/pytorch/pytorch/issues/74732
+The image below is one of the charts during my experiments - from the Small model 😀
+<img src="readme-images/results-preview.png" alt="Local Image" width="600" height="475"/>
 
 ---
 
@@ -149,14 +193,42 @@ Source [Hengtao Tantai's Blog](https://medium.com/@zergtant/accelerating-model-i
 # Issues I faced
 
 ### With the ONNX export
-By far the biggest issue I faced. 
+By far the biggest issue I faced. I started with the [LLaMA2-7B model](https://www.kaggle.com/models/metaresearch/llama-2/Code?modelIds=735&sortBy=voteCount&excludeNonAccessedDatasources=true), but it turned out to be too heavy for my Kaggle system.Then shifted to the [Phi2 model](https://www.kaggle.com/models/Microsoft/phi/transformers/2), however, its ONNX dump worth 12 GB was enough to give oom errors 😅. Finally shifted to the [TinyLLaMA model](https://www.kaggle.com/models/mambagetout/tinyllama) which at about 1B params and a 4GB ONNX model seemed okay. 
+
+Interestingly, the simple `torch.onnx.export` command led to failed exports on Kaggle. A notebook mentioned about first creating an empty file using `!touch model.onnx` and then writing to it - which worked!
+
+
+However, the model's ONNX version is not a single file. When the ONNX outputs exceed a 2 GB upper cap, protobuf splits the model's weights into hundreds of files. This leads to the `onnx.checker.check_model` giving a *ValueError: Message onnx.ModelProto exceeds maximum protobuf size of 2GB: 4402590179*. Still, the `model.onnx` file is supposed to *bind* all the weights together. 
+
+Getting inferences with this ONNX file with the `onnxruntime` works well. We spin up an `onnxruntime` session and good to go
+> Refer Notebook 1
+
+**However, TensorRT does not accept this ONNX file!** This is the main issue. The ONNX file is just not parsed. It complains about not finding certain weight files. Even working with specific settings within the `torch.onnx.export` like `export_params`, which says weights won't be exported to seperate files - doesn't work. Trying with the new `dynamo_export` option doesn't help too. Other options to export the model like the HuggingFace `Optimum` tool were also explored, but with large models like LLMs, issues persist.
+
+The errors also pointed to checking a `sarif_report` of the exported ONNX model, which would enable manual checking of the exported graph. However, I feel I might need additional time to debug this. Below is a snippet from the sarif report. 
+
+<img src="readme-images/sarif-report.png" alt="Local Image" width="800" height="475"/>
+
+
+After spending quite some time to find a workaround, I shift to trying with a simple Neural Net and going ahead with converting to TensorRT and subsequent benchmarking. Shall go over this issue sometime again.
+
+Source [Github Issue](https://github.com/pytorch/pytorch/issues/94280#issuecomment-2089196400), [Pytorch Blogs](https://pytorch.org/tutorials/advanced/super_resolution_with_onnxruntime.html), [Pytorch Docs](https://pytorch.org/docs/main/onnx_torchscript.html#torch.onnx.export)
+
+
+#### Past Issues  with tinyllama
+There have been issues while converting small models like TinyLLaMA to ONNX. The library seems to still be in development and support for new models is being added continuously.  
+
+Source [Optimum Issues](https://github.com/huggingface/optimum/issues/1606#issuecomment-1866507683), [Pytorch Issues](https://github.com/pytorch/pytorch/issues/74732), [Transformer Issues](https://github.com/huggingface/transformers/issues/28981)
+
+
+
 
 
 ### Versioning
 
 <img src="readme-images/issues-tensorrt-1.png" alt="Local Image" width="800" height="150"/> \
-However, installing these results in ERROR: No matching distribution found! This is because NVIDIA doesn't support anything before Version 8 now removed everything upto version 7 [check official releases!](https://docs.nvidia.com/deeplearning/tensorrt/release-notes/index.html). \
-For a while it seemed like all the tutorials and blogs online were in version 7. Thankfully, it wasn't the case everywhere.
+However, installing these results in ERROR: No matching distribution found! This is because NVIDIA doesn't support anything before Version 8 now removed everything upto Version 7 [check official releases!](https://docs.nvidia.com/deeplearning/tensorrt/release-notes/index.html). \
+For a while it seemed like all the tutorials and blogs online were in Version 7. Thankfully, it wasn't the case everywhere.
 
 
 ### The API keeps changing
