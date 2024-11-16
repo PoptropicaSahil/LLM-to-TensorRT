@@ -94,6 +94,44 @@ Even though this is not directly related to my issue, but surely there have been
 https://github.com/huggingface/optimum/issues/1606#issuecomment-1866507683
 
 
+# Not all models are compatible with kv cache
+https://github.com/huggingface/transformers/issues/28981!
+It says llama and whisper only for now.
+
+
+# Issues with Tensor RT LLM 
+https://medium.com/@zergtant/accelerating-model-inference-with-tensorrt-tips-and-best-practices-for-pytorch-users-7cd4c30c97bc
+
+Issues to be noted
+When converting a PyTorch model to TensorRT engine, there are several issues should be noted:
+
+- Precision differences: TensorRT uses different numerical precision than PyTorch, which lead to small differences in output of model. This is especially important to consider if model will be used in safety-critical applications.
+
+- Dynamic shapes: PyTorch models can have dynamic input shapes, meaning that input shape can vary from one inference to next. TensorRT requires static input shapes, meaning that the input shape must be known and fixed at time of engine creation. Input shape must be manually specified when creating the TensorRT engine.
+
+- Unsupported operations: Not all PyTorch operations are supported by TensorRT. Some operations may need to be manually implemented in TensorRT or replaced with supported operations that provide similar functionality.
+
+- Memory usage: TensorRT engines require additional memory for storing intermediate results and optimization data. This means that memory requirements for TensorRT engine may be different than for the original PyTorch model, and should be taken into account when deploying model.
+
+- TensorRT version: The version of TensorRT used for engine creation and inference should be compatible with the version of PyTorch used to create the original model. If the versions are not compatible, the conversion process may fail or the performance of the TensorRT engine may be suboptimal.
+
+
+# Issues with the library
+https://forums.developer.nvidia.com/t/build-cuda-engine-throws-error/300198/3
+The API keeps changing
+
+![alt text](image-1.png)
+![alt text](image.png)
+
+
+# TRT EXEC
+The trtexec command line wrapper seems like a lightweight tool to convert onnx models to tensor rt. However running it on kaggle (even as a subprocess) doesnt seem possible. One has to build it from the repo and set correct path variables etc.
+
+# Building locally
+The onnx-tensorrt library allows to convert onnx models to tensor rt directly. However, again, running on kaggle systems doesnt seem possible :/ Building the repo locally seems to be the way which isn't possible for me.
+https://github.com/onnx/onnx-tensorrt?tab=readme-ov-file#building
+
+
 # On github code by zucchini-nlp
 suggested code works as expected as the results match the dynamic cache generation :)
 
