@@ -1,3 +1,38 @@
+# Manual TensorRT Conversion and Optimization - LLM Optimization
+
+> This repo is an attempt to explore the TensorRT framework by NVIDIA.
+
+**Objective: Convert an LLM to TensorRT without existing automated pipelines like TensorRT-LLM**
+
+
+### LLM to TensorRT Conversion
+Select any open-source LLM. Manually convert the chosen model to TensorRT without using TRT-LLM. Document the step-by-step conversion process, including
+- Dynamic shape handling
+- Making KV Cache static
+- Network definition and layer creation
+- Weight extraction and setting
+
+### Benchmarking and Analysis
+Compare this in the offline mode with HF transformers with FlashAttention and Frozen KV Cache. Provide a detailed analysis of performance improvements and any trade-offs.
+
+### Deliverables:
+Source code for both parts with comprehensive documentation. Technical report covering:
+- Optimization strategies
+- TensorRT conversion process and challenges
+- Performance analysis and benchmarking results
+- Recommendations for further optimization
+Also add Jupyter notebook or script demonstrating benchmarking process and results.
+
+
+### Note: Extra points for integrating this LLM with a simple DRY sampler implementatio
+
+---
+---
+
+
+# Understanding of Concepts
+> Given that almost all terms mentioned above are new for me 😅, let me provide notes on what all they mean. 
+
 
 @oobabooga yeah, StaticCache by itself won't be faster -- it only shines together with torch.compile
 
@@ -117,23 +152,37 @@ When converting a PyTorch model to TensorRT engine, there are several issues sho
 
 
 # Issues with the library
-https://forums.developer.nvidia.com/t/build-cuda-engine-throws-error/300198/3
-The API keeps changing
 
-![alt text](image-1.png)
-![alt text](image.png)
+### Versioning
 
-![alt text](image-2.png)
+<img src="readme-images/issues-tensorrt-1.png" alt="Local Image" width="800" height="150"/> \
+However, installing these results in ERROR: No matching distribution found! This is because NVIDIA doesn't support anything before Version 8 now removed everything upto version 7 [check official releases!](https://docs.nvidia.com/deeplearning/tensorrt/release-notes/index.html). \
+For a while it seemed like all the tutorials and blogs online were in version 7. Thankfully, it wasn't the case everywhere.
 
-# if engine.binding_is_input(binding):
-if engine.get_tensor_mode(binding) == TensorIOMode.INPUT:
 
-# TRT EXEC
-The trtexec command line wrapper seems like a lightweight tool to convert onnx models to tensor rt. However running it on kaggle (even as a subprocess) doesnt seem possible. One has to build it from the repo and set correct path variables etc.
+### The API keeps changing
+Since this is a rapidly expanding library, frequent API changes make life slightly difficult. 
+<img src="readme-images/issues-tensorrt-2.png" alt="Local Image" width="800" height="175"/>
+<img src="readme-images/issues-tensorrt-3.png" alt="Local Image" width="800" height="150"/>
 
-# Building locally
-The onnx-tensorrt library allows to convert onnx models to tensor rt directly. However, again, running on kaggle systems doesnt seem possible :/ Building the repo locally seems to be the way which isn't possible for me.
-https://github.com/onnx/onnx-tensorrt?tab=readme-ov-file#building
+
+Here are a few attributes that caused by head to spin!
+- `context_execute_async_v2` (deprecated) vs `context_execute_async_v3` (new)
+- `engine.binding_is_input` (deprecated) vs `engine.get_tensor_mode` (new)
+- `engine.max_batch_size` (deprecated) vs only supports the value 1 (new) 
+- *a few more!*
+
+Source [NVIDIA forums](https://forums.developer.nvidia.com/t/build-cuda-engine-throws-error/300198/3), [Github Issues](https://github.com/NVIDIA/trt-samples-for-hackathon-cn/issues/104)
+
+
+### Not using local builds
+Expectedly, the TRT library is built for GPUs. I resorted to using Colab and Kaggle. This had a few major downsides since I could not leverage popular libraries that would have made things simpler.
+
+#### trtexec
+The `trtexec` command line wrapper seems like a lightweight tool to convert `onnx` models to TensorRT format directly. However running it on Kaggle (even as a subprocess) doesn't seem possible. One has to build it from the repo and set correct path variables etc. Source [building trtexec.](https://github.com/NVIDIA/TensorRT/tree/main/samples/trtexec)
+
+#### onnx-tensorrt
+Similarly, the `onnx-tensorrt` library allows to convert `onnx` models to TensorRT format directly. However, again, running on Kaggle systems doesnt seem possible :/ Building the repo locally seems to be the way which isn't possible for me. Source [building onnx-tensorrt.](https://github.com/onnx/onnx-tensorrt?tab=readme-ov-file#building)
 
 
 # On github code by zucchini-nlp
