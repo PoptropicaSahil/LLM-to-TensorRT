@@ -41,6 +41,18 @@ Making a model handle dynamic shapes is important because the length of input te
 By making the **KV cache static, the model can reuse the cached values from previous computations, rather than recomputing them for each new token**. This significantly improves the inference speed of the model, as it avoids the overhead of creating and managing the cache dynamically.
 In the provided code, the **StaticCache** class is used to initialize and manage the KV cache. **This class pre-allocates the cache tensors with a fixed size (e.g., 32 in the example)**, and the model can then efficiently access and update these cached values during inference.
 
+
+## More on Static Cache (by qwen)
+- **Dynamic Cache**:
+- - Purpose: Automatically manages the cache for each forward pass. **Suitable for single-pass inference where the cache is not reused across multiple calls.**
+- - Usage: Typically used when you don't need to persist the cache between different inference calls.
+- **Static Cache**:
+- - Purpose: Persists the cache across multiple forward passes. **Useful for generating sequences token by token, where the cache needs to be reused.**
+- - Usage: Requires manual management of the cache, ensuring that the cache is updated and reused correctly.
+
+> This understanding helps to navigate into making token by token gerneation
+
+
 Regarding loading the ONNX model and running inferences, you can use a library like **ONNX Runtime** to load the exported ONNX model and perform inference. ONNX Runtime is optimized for running ONNX models efficiently, and it can take advantage of various hardware accelerators (e.g., GPU, TensorRT) to further improve the inference speed.
 
 
@@ -80,3 +92,23 @@ The dynamic_axes in torch.onnx.export() should theoretically handle dynamic inpu
 # Past Issues  with tinyllama
 Even though this is not directly related to my issue, but surely there have been issues while converting small models like tinyllama to onnx. 
 https://github.com/huggingface/optimum/issues/1606#issuecomment-1866507683
+
+
+# On github code by zucchini-nlp
+suggested code works as expected as the results match the dynamic cache generation :)
+
+We have to use the full attn mask because in every attention layer we concatenate previous keys/values with the current one-token key/value, thus obtaining the full attn matrix for the whole sequence length. So we have to apply the correct mask to get correct scores
+
+# Nice notes on model
+https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#weightless-build
+https://github.com/NVIDIA/TensorRT/tree/main/samples/python/sample_weight_stripping
+- Help to create and optimize an engine without unnecessary weights
+- On inference load engine and refit with onnx weights
+- It`s more fast and no duplicate weights
+
+https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#weightless-build
+https://github.com/NVIDIA/TensorRT/tree/main/samples/python/sample_weight_stripping
+- Help to create and optimize an engine without unnecessary weights
+- On inference load engine and refit with onnx weights
+- It`s more fast and no duplicate weights
+
